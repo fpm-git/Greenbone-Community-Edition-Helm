@@ -20,6 +20,8 @@ ospd:
 #128  Debug.  (Lots of output.)
 logLevel: 16
 
+FEED_RELEASE: "24.10"
+
 ospdOpenvas:
   resources:
     requests:

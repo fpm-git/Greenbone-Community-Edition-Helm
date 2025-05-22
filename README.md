@@ -1,10 +1,11 @@
  # Helm chart for Greenbone Community Edition
 
- This helm chart is based off of this docker-compose file: https://greenbone.github.io/docs/latest/22.4/container/index.html#docker-compose-file
-
  This chart was developed to get working as fast as possible, there are things that can be improved on.
 
  ## A few things to note
+
+ ### Docker-compose
+ This helm chart is based off of this docker-compose file: https://greenbone.github.io/docs/latest/22.4/container/index.html#docker-compose-file. At least originally. File at location has been updated. So from now on keeping a copy of the docker composed used for last update here to better track changes.
 
  ### PG-GVM
 

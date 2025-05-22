@@ -86,6 +86,9 @@ spec:
         - name: data-objects
           image: registry.community.greenbone.net/community/data-objects
           imagePullPolicy: Always
+          env:
+            - name: FEED_RELEASE
+              value: "{{ .Values.FEED_RELEASE }}"
           volumeMounts:
             - name: gvmd-storage
               mountPath: /mnt
@@ -96,6 +99,9 @@ spec:
         - name: report-formats
           image: registry.community.greenbone.net/community/report-formats
           imagePullPolicy: Always
+          env:
+            - name: FEED_RELEASE
+              value: "{{ .Values.FEED_RELEASE }}"
           volumeMounts:
             - name: gvmd-storage
               mountPath: /mnt
@@ -117,8 +123,8 @@ spec:
           image: registry.community.greenbone.net/community/vulnerability-tests
           imagePullPolicy: Always
           env:
-            - name: STORAGE_PATH
-              value: "/var/lib/openvas/22.04/vt-data/nasl"
+            - name: FEED_RELEASE
+              value: "{{ .Values.FEED_RELEASE }}"
           volumeMounts:
             - name: shared-storage
               mountPath: /mnt
