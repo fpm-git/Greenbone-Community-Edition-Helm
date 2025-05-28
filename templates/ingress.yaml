@@ -23,7 +23,7 @@ spec:
           service:
             port:
               number: 80
-            name: openvas-service
+            name: {{ include "openvas.fullname" . }}-service
         path: /
         pathType: Prefix
   {{- end }}
