@@ -7,6 +7,11 @@ psgvm:
   image:
     repository: registry.community.greenbone.net/community/pg-gvm
     tag: stable
+  persistence:
+    enabled: true
+    storageClass: "default"
+    accessMode: ReadWriteOnce
+    size: 50Gi
 ospd:
   image:
     repository: registry.community.greenbone.net/community/ospd-openvas
@@ -80,7 +85,8 @@ serviceAccount:
   # If not set and create is true, a name is generated using the fullname template
   name: "openvas-serviceaccount"
 
-podAnnotations: {}
+podAnnotations:
+  reloader.stakater.com/auto: "true"
 
 podSecurityContext: 
   runAsUser: 0
