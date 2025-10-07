@@ -15,7 +15,7 @@ psgvm:
 ospd:
   image:
     repository: registry.community.greenbone.net/community/ospd-openvas
-    tag: edge
+    tag: stable
 
 #  4  Errors.
 #  8  Critical situation.
