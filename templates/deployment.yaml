@@ -39,6 +39,9 @@ spec:
           image: {{ .Values.psgvm.image.repository }}:{{ .Values.psgvm.image.tag }}
           imagePullPolicy: Always
           command: ["/bin/sh", "-c", "/init-scripts/init-postgres.sh"]
+          env:
+            - name: POSTGRES_VERSION
+              value: "{{ .Values.psgvm.POSTGRES_VERSION }}"
           volumeMounts:
             - name: psql-storage
               mountPath: /mnt/postgresql

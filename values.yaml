@@ -4,9 +4,10 @@
 hostname: openvas.example.com
 
 psgvm:
+  POSTGRES_VERSION: "17"
   image:
     repository: registry.community.greenbone.net/community/pg-gvm
-    tag: stable
+    tag: 22.6.13
   persistence:
     enabled: true
     storageClass: "default"

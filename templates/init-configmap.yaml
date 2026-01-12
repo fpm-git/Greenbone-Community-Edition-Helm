@@ -8,112 +8,230 @@ metadata:
 data:
   init-postgres.sh: |
     #!/bin/sh
+    set -u
 
-    echo "[INFO] Checking environment variables"
-    [ -z "$POSTGRES_USER" ] && POSTGRES_USER="gvmd"
-    [ -z "$POSTGRES_DATA" ] && POSTGRES_DATA="/var/lib/postgresql"
-    [ -z "$POSTGRES_HOST_AUTH_METHOD" ] && POSTGRES_HOST_AUTH_METHOD="md5"
-    [ -z "$POSTGRES_VERSION" ] && POSTGRES_VERSION=13
+    log() { echo "[INFO] $*"; }
+    warn() { echo "[WARN] $*"; }
+    err() { echo "[ERROR] $*" >&2; }
+
+    run() {
+      log "RUN: $*"
+      "$@"
+      rc=$?
+      if [ $rc -ne 0 ]; then
+        err "Command failed (rc=$rc): $*"
+        return $rc
+      fi
+      return 0
+    }
+
+    dump_fs() {
+      err "Filesystem dump (best-effort):"
+
+      for p in \
+        /etc \
+        /etc/postgresql \
+        "/etc/postgresql/${POSTGRES_VERSION:-}" \
+        "/etc/postgresql/${POSTGRES_VERSION:-}/main" \
+        /var/lib/postgresql \
+        "/var/lib/postgresql/${POSTGRES_VERSION:-}" \
+        /var/run/postgresql \
+        /run/postgresql \
+        /mnt \
+        /mnt/postgresql \
+        "/mnt/postgresql/${POSTGRES_VERSION:-}" \
+      ; do
+        if [ -e "$p" ]; then
+          if [ -d "$p" ]; then
+            err "  - ls -la $p:"
+            ls -la "$p" 2>&1 | sed 's/^/[ERROR]      /' >&2
+          else
+            err "  - stat $p:"
+            (stat "$p" 2>&1 || true) | sed 's/^/[ERROR]      /' >&2
+          fi
+        else
+          err "  - MISSING: $p"
+        fi
+      done
+
+      # Show postgres-common cluster registry if present
+      if command -v pg_lsclusters >/dev/null 2>&1; then
+        err "pg_lsclusters (best-effort):"
+        (pg_lsclusters 2>&1 || true) | sed 's/^/[ERROR]   /' >&2
+      fi
+
+      # Show packages if dpkg exists (Debian)
+      if command -v dpkg >/dev/null 2>&1; then
+        err "dpkg -l (postgres-related, best-effort):"
+        (dpkg -l 2>/dev/null | egrep -i 'postgres|postgre|postgresql-common' || true) | sed 's/^/[ERROR]   /' >&2
+      fi
+
+      # Show mounts to spot read-only or missing volume mounts
+      if command -v mount >/dev/null 2>&1; then
+        err "mount (best-effort):"
+        (mount 2>&1 || true) | sed 's/^/[ERROR]   /' >&2
+      fi
+    }
+
+    die() {
+      err "$*"
+      err "Context:"
+      err "  POSTGRES_VERSION=${POSTGRES_VERSION:-<unset>}"
+      err "  POSTGRES_DATA=${POSTGRES_DATA:-<unset>}"
+      err "  POSTGRES_HBA_CONF=${POSTGRES_HBA_CONF:-<unset>}"
+      err "  POSTGRES_SETUP_DIR=${POSTGRES_SETUP_DIR:-<unset>}"
+      err "  PATH=$PATH"
+      err "Tools present:"
+      for b in pg_ctlcluster pg_lsclusters pg_createcluster postgres psql initdb dpkg; do
+        if command -v "$b" >/dev/null 2>&1; then
+          err "  - $b: $(command -v "$b")"
+        else
+          err "  - $b: MISSING"
+        fi
+      done
+      dump_fs
+      exit 1
+    }
+
+    log "Checking environment variables"
+    [ -z "${POSTGRES_USER:-}" ] && POSTGRES_USER="gvmd"
+    [ -z "${POSTGRES_DATA:-}" ] && POSTGRES_DATA="/var/lib/postgresql"
+    [ -z "${POSTGRES_HOST_AUTH_METHOD:-}" ] && POSTGRES_HOST_AUTH_METHOD="md5"
+    [ -z "${POSTGRES_VERSION:-}" ] && POSTGRES_VERSION=13
 
     POSTGRES_DB=gvmd
     POSTGRES_HBA_CONF="/etc/postgresql/$POSTGRES_VERSION/main/pg_hba.conf"
     POSTGRES_SETUP_DIR="/mnt/postgresql/$POSTGRES_VERSION/main"
 
-    echo "[INFO] POSTGRES_USER=$POSTGRES_USER"
-    echo "[INFO] POSTGRES_DATA=$POSTGRES_DATA"
-    echo "[INFO] POSTGRES_HOST_AUTH_METHOD=$POSTGRES_HOST_AUTH_METHOD"
-    echo "[INFO] POSTGRES_DB=$POSTGRES_DB"
-    echo "[INFO] POSTGRES_VERSION=$POSTGRES_VERSION"
-    echo "[INFO] POSTGRES_HBA_CONF=$POSTGRES_HBA_CONF"
-    echo "[INFO] POSTGRES_SETUP_DIR=$POSTGRES_SETUP_DIR"
+    log "POSTGRES_USER=$POSTGRES_USER"
+    log "POSTGRES_DATA=$POSTGRES_DATA"
+    log "POSTGRES_HOST_AUTH_METHOD=$POSTGRES_HOST_AUTH_METHOD"
+    log "POSTGRES_DB=$POSTGRES_DB"
+    log "POSTGRES_VERSION=$POSTGRES_VERSION"
+    log "POSTGRES_HBA_CONF=$POSTGRES_HBA_CONF"
+    log "POSTGRES_SETUP_DIR=$POSTGRES_SETUP_DIR"
 
-    echo "[INFO] Checking if PostgreSQL is already set up"
+    log "Checking if PostgreSQL is already set up"
     if [ -d "$POSTGRES_SETUP_DIR" ]; then
-        echo "[INFO] PostgreSQL already set up at $POSTGRES_SETUP_DIR, skipping initialization."
-        exit 0
+      log "PostgreSQL already set up at $POSTGRES_SETUP_DIR, skipping initialization."
+      exit 0
     fi
 
-    echo "[INFO] Removing started file if present"
-    rm -f "$POSTGRES_DATA/started"
-
-    echo "[INFO] Writing pg_hba.conf"
-    echo "local all all trust" > $POSTGRES_HBA_CONF
-
-    if [ "$POSTGRES_HOST_AUTH_METHOD" = "trust" ]; then
-        echo "[WARN] trust is enabled for all connections"
-        echo "# see https://www.postgresql.org/docs/$POSTGRES_VERSION/auth-trust.html"
+    log "Sanity checks for expected Debian cluster layout"
+    if ! command -v pg_ctlcluster >/dev/null 2>&1; then
+      die "pg_ctlcluster is not available. This init script expects a Debian/Ubuntu postgresql-common based image with a '<version> main' cluster."
     fi
 
-    echo "host all all all $POSTGRES_HOST_AUTH_METHOD" >> $POSTGRES_HBA_CONF
+    HBA_DIR="$(dirname "$POSTGRES_HBA_CONF")"
+    if [ ! -d "$HBA_DIR" ]; then
+      err "Expected directory does not exist: $HBA_DIR"
+      err "Likely causes:"
+      err "  - Base image changed and no longer provides /etc/postgresql/<ver>/main"
+      err "  - postgresql-common not installed"
+      err "  - cluster '<ver> main' not created"
+      die "Cannot continue because pg_hba.conf cannot be written."
+    fi
+    if [ ! -w "$HBA_DIR" ]; then
+      die "Directory is not writable: $HBA_DIR (check container user/permissions or read-only filesystem)"
+    fi
 
-    echo "[INFO] Starting PostgreSQL cluster"
-    pg_ctlcluster -o "-k /tmp" -o "-c listen_addresses=''" $POSTGRES_VERSION main start
+    log "Removing started file if present"
+    rm -f "$POSTGRES_DATA/started" || die "Failed removing $POSTGRES_DATA/started (check POSTGRES_DATA mount and permissions)"
 
-    echo "[INFO] Checking if user $POSTGRES_USER exists"
-    USER_EXISTS="$(echo "SELECT 1 FROM pg_roles WHERE rolname = '$POSTGRES_USER'" | psql --host=/tmp -U postgres -d postgres --tuples-only)"
+    log "Writing pg_hba.conf"
+    {
+      echo "local all all trust"
+      if [ "$POSTGRES_HOST_AUTH_METHOD" = "trust" ]; then
+        warn "trust is enabled for all connections"
+        warn "see https://www.postgresql.org/docs/$POSTGRES_VERSION/auth-trust.html"
+      fi
+      echo "host all all all $POSTGRES_HOST_AUTH_METHOD"
+    } > "$POSTGRES_HBA_CONF" 2>/dev/null || die "Failed to write $POSTGRES_HBA_CONF (permissions/FS/layout mismatch)"
+
+    log "Starting PostgreSQL cluster"
+    if command -v pg_lsclusters >/dev/null 2>&1; then
+      log "pg_lsclusters output:"
+      pg_lsclusters 2>&1 | sed 's/^/[INFO]   /'
+    fi
+
+    run pg_ctlcluster -o "-k /tmp" -o "-c listen_addresses=''" "$POSTGRES_VERSION" main start || {
+      err "Failed to start cluster '$POSTGRES_VERSION main'."
+      err "Likely causes:"
+      err "  - cluster '$POSTGRES_VERSION main' does not exist in this image"
+      err "  - wrong POSTGRES_VERSION for this image"
+      err "  - missing postgresql-common cluster tools/config"
+      die "PostgreSQL cluster did not start; subsequent psql/createuser/createdb will fail."
+    }
+
+    log "Checking socket exists"
+    if [ ! -S /tmp/.s.PGSQL.5432 ]; then
+      warn "Expected socket not found at /tmp/.s.PGSQL.5432. psql may fail."
+    fi
+
+    log "Checking if user $POSTGRES_USER exists"
+    USER_EXISTS="$(echo "SELECT 1 FROM pg_roles WHERE rolname = '$POSTGRES_USER'" | psql --host=/tmp -U postgres -d postgres --tuples-only 2>/dev/null || true)"
     if [ -z "$USER_EXISTS" ]; then
-        echo "[INFO] Creating user $POSTGRES_USER"
-        createuser --host=/tmp -U postgres -DRS "$POSTGRES_USER"
+      log "Creating user $POSTGRES_USER"
+      run createuser --host=/tmp -U postgres -DRS "$POSTGRES_USER" || die "createuser failed (server not reachable on /tmp socket or auth issue)"
     else
-        echo "[INFO] User $POSTGRES_USER already exists"
+      log "User $POSTGRES_USER already exists"
     fi
 
-    if [ -n "$POSTGRES_PASSWORD" ]; then
-        echo "[INFO] Setting password for $POSTGRES_USER"
-        echo "ALTER ROLE $POSTGRES_USER PASSWORD '$POSTGRES_PASSWORD';" | \
-            psql --host=/tmp -U postgres -d postgres
+    if [ -n "${POSTGRES_PASSWORD:-}" ]; then
+      log "Setting password for $POSTGRES_USER"
+      echo "ALTER ROLE $POSTGRES_USER PASSWORD '$POSTGRES_PASSWORD';" | psql --host=/tmp -U postgres -d postgres 2>/dev/null || die "Failed setting password (psql/connectivity/auth issue)"
     fi
 
-    echo "[INFO] Checking if database $POSTGRES_DB exists"
-    DB_EXISTS="$(echo "SELECT 1 FROM pg_database WHERE datname = '$POSTGRES_DB';" | psql --host=/tmp -U postgres -d postgres --tuples-only)"
+    log "Checking if database $POSTGRES_DB exists"
+    DB_EXISTS="$(echo "SELECT 1 FROM pg_database WHERE datname = '$POSTGRES_DB';" | psql --host=/tmp -U postgres -d postgres --tuples-only 2>/dev/null || true)"
     if [ -z "$DB_EXISTS" ]; then
-        echo "[INFO] Creating database $POSTGRES_DB owned by $POSTGRES_USER"
-        createdb --host=/tmp -U postgres -O "$POSTGRES_USER" "$POSTGRES_DB"
+      log "Creating database $POSTGRES_DB owned by $POSTGRES_USER"
+      run createdb --host=/tmp -U postgres -O "$POSTGRES_USER" "$POSTGRES_DB" || die "createdb failed (psql/connectivity/auth issue)"
     else
-        echo "[INFO] Database $POSTGRES_DB already exists"
+      log "Database $POSTGRES_DB already exists"
     fi
 
-    echo "[INFO] Checking if role dba exists"
-    DBA_EXISTS="$(echo "SELECT 1 FROM pg_roles WHERE rolname = 'dba';" | psql --host=/tmp -U postgres -d $POSTGRES_DB --tuples-only)"
+    log "Checking if role dba exists"
+    DBA_EXISTS="$(echo "SELECT 1 FROM pg_roles WHERE rolname = 'dba';" | psql --host=/tmp -U postgres -d "$POSTGRES_DB" --tuples-only 2>/dev/null || true)"
     if [ -z "$DBA_EXISTS" ]; then
-        echo "[INFO] Creating role dba and granting to $POSTGRES_USER"
-        psql --host=/tmp -U postgres -d $POSTGRES_DB -c "create role dba with superuser noinherit;"
-        psql --host=/tmp -U postgres -d $POSTGRES_DB -c "grant dba to $POSTGRES_USER;"
+      log "Creating role dba and granting to $POSTGRES_USER"
+      run psql --host=/tmp -U postgres -d "$POSTGRES_DB" -c "create role dba with superuser noinherit;" || die "Failed creating role dba"
+      run psql --host=/tmp -U postgres -d "$POSTGRES_DB" -c "grant dba to $POSTGRES_USER;" || die "Failed granting role dba"
     else
-        echo "[INFO] Role dba already exists"
+      log "Role dba already exists"
     fi
 
-    echo "[INFO] Checking for extension uuid-ossp"
-    UUID_OSSP_EXTENSION_EXISTS="$(echo "SELECT 1 FROM pg_extension WHERE extname = 'uuid-ossp';" | psql --host=/tmp -U postgres -d $POSTGRES_DB --tuples-only)"
+    log "Checking for extension uuid-ossp"
+    UUID_OSSP_EXTENSION_EXISTS="$(echo "SELECT 1 FROM pg_extension WHERE extname = 'uuid-ossp';" | psql --host=/tmp -U postgres -d "$POSTGRES_DB" --tuples-only 2>/dev/null || true)"
     if [ -z "$UUID_OSSP_EXTENSION_EXISTS" ]; then
-        echo "[INFO] Creating extension uuid-ossp"
-        psql --host=/tmp -U postgres -d $POSTGRES_DB -c 'create extension "uuid-ossp";'
+      log 'Creating extension uuid-ossp'
+      run psql --host=/tmp -U postgres -d "$POSTGRES_DB" -c 'create extension "uuid-ossp";' || die "Failed creating extension uuid-ossp"
     else
-        echo "[INFO] Extension uuid-ossp already exists"
+      log "Extension uuid-ossp already exists"
     fi
 
-    echo "[INFO] Checking for extension pgcrypto"
-    PGCRYPTO_EXTENSION_EXISTS="$(echo "SELECT 1 FROM pg_extension WHERE extname = 'pgcrypto';" | psql --host=/tmp -U postgres -d $POSTGRES_DB --tuples-only)"
+    log "Checking for extension pgcrypto"
+    PGCRYPTO_EXTENSION_EXISTS="$(echo "SELECT 1 FROM pg_extension WHERE extname = 'pgcrypto';" | psql --host=/tmp -U postgres -d "$POSTGRES_DB" --tuples-only 2>/dev/null || true)"
     if [ -z "$PGCRYPTO_EXTENSION_EXISTS" ]; then
-        echo "[INFO] Creating extension pgcrypto"
-        psql --host=/tmp -U postgres -d $POSTGRES_DB -c 'create extension "pgcrypto";'
+      log "Creating extension pgcrypto"
+      run psql --host=/tmp -U postgres -d "$POSTGRES_DB" -c 'create extension "pgcrypto";' || die "Failed creating extension pgcrypto"
     else
-        echo "[INFO] Extension pgcrypto already exists"
+      log "Extension pgcrypto already exists"
     fi
 
-    echo "[INFO] Checking for extension pg-gvm"
-    PG_GVM_EXTENSION_EXISTS="$(echo "SELECT 1 FROM pg_extension WHERE extname = 'pg-gvm';" | psql --host=/tmp -U postgres -d $POSTGRES_DB --tuples-only)"
+    log "Checking for extension pg-gvm"
+    PG_GVM_EXTENSION_EXISTS="$(echo "SELECT 1 FROM pg_extension WHERE extname = 'pg-gvm';" | psql --host=/tmp -U postgres -d "$POSTGRES_DB" --tuples-only 2>/dev/null || true)"
     if [ -z "$PG_GVM_EXTENSION_EXISTS" ]; then
-        echo "[INFO] Creating extension pg-gvm"
-        psql --host=/tmp -U postgres -d $POSTGRES_DB -c 'create extension "pg-gvm";'
+      log "Creating extension pg-gvm"
+      run psql --host=/tmp -U postgres -d "$POSTGRES_DB" -c 'create extension "pg-gvm";' || die "Failed creating extension pg-gvm"
     else
-        echo "[INFO] Extension pg-gvm already exists"
+      log "Extension pg-gvm already exists"
     fi
 
-    echo "[INFO] Stopping PostgreSQL cluster"
-    pg_ctlcluster --foreground $POSTGRES_VERSION main stop
+    log "Stopping PostgreSQL cluster"
+    run pg_ctlcluster "$POSTGRES_VERSION" main stop || warn "Failed to stop cluster '$POSTGRES_VERSION main'"
 
-    echo "[INFO] Copying data to PersistentVolume"
-    cp -ra /var/lib/postgresql/* /mnt/postgresql/
+    log "Copying data to PersistentVolume"
+    run cp -ra /var/lib/postgresql/* /mnt/postgresql/ || die "Failed copying data to /mnt/postgresql (check PV mount and permissions)"
 
-    echo "[INFO] PostgreSQL initialization complete"
+    log "PostgreSQL initialization complete"
