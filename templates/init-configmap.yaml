@@ -51,6 +51,40 @@ data:
       fi
     }
 
+    list_supported_versions() {
+      err "PostgreSQL versions present in /etc/postgresql (best-effort):"
+      if [ -d /etc/postgresql ]; then
+        ls -la /etc/postgresql 2>&1 | sed 's/^/[ERROR]   /' >&2
+        for d in /etc/postgresql/*; do
+          [ -d "$d" ] || continue
+          base="$(basename "$d")"
+          case "$base" in
+            ''|.*) continue ;;
+          esac
+          # Only consider numeric version dirs
+          echo "$base" | grep -Eq '^[0-9]+$' || continue
+          err "  - /etc/postgresql/$base:"
+          ls -la "/etc/postgresql/$base" 2>&1 | sed 's/^/[ERROR]      /' >&2
+          if [ -d "/etc/postgresql/$base/main" ]; then
+            err "    - /etc/postgresql/$base/main:"
+            ls -la "/etc/postgresql/$base/main" 2>&1 | sed 's/^/[ERROR]        /' >&2
+          fi
+        done
+      else
+        err "  - /etc/postgresql is MISSING"
+      fi
+
+      if command -v pg_lsclusters >/dev/null 2>&1; then
+        err "Clusters registered (pg_lsclusters):"
+        (pg_lsclusters 2>&1 || true) | sed 's/^/[ERROR]   /' >&2
+      fi
+
+      if command -v dpkg >/dev/null 2>&1; then
+        err "Installed PostgreSQL packages (dpkg -l postgresql-*):"
+        (dpkg -l 2>/dev/null | egrep -i '^(ii)\s+postgresql-[0-9]+' || true) | sed 's/^/[ERROR]   /' >&2
+      fi
+    }
+
     die() {
       err "$*"
       err "Context:"
@@ -63,6 +97,9 @@ data:
       dump_fs
       exit 1
     }
+
+    log "Detected supported PostgreSQL versions in image"
+    list_supported_versions
 
     log "Checking environment variables"
     [ -z "${POSTGRES_USER:-}" ] && POSTGRES_USER="gvmd"
