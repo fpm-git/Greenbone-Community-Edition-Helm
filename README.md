@@ -34,7 +34,7 @@ The old `securityContext` value was never used and has been removed. Do not set 
 
 ### Notus (local security checks)
 
-`gpg-data` copies the Greenbone feed key into `/etc/openvas/gnupg` (`GNUPGHOME`) so ospd-openvas and openvasd can verify the Notus advisories. The scanner reaches openvasd on `http://127.0.0.1:81/notus` (`notus_url`). openvasd has no authentication, so it only listens on localhost (`openvasd.listening`) and is not part of the Service.
+`gpg-data` copies the Greenbone feed key into `/etc/openvas/gnupg` (`GNUPGHOME`) so ospd-openvas and openvasd can verify the Notus advisories. The scanner reaches openvasd on `http://127.0.0.1:81` (`openvasd_server`; ospd-openvas needs this key rather than `notus_url` to skip its MQTT client). openvasd has no authentication, so it only listens on localhost (`openvasd.listening`) and is not part of the Service.
 
 Extra `openvas.conf` settings can be added with `openvasConf`.
 

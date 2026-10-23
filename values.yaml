@@ -46,7 +46,7 @@ ospdOpenvas:
 # Extra settings appended to /etc/openvas/openvas.conf, e.g.
 #   openvasConf:
 #     plugins_timeout: 600
-# table_driven_lsc and notus_url are always set by the chart.
+# table_driven_lsc and openvasd_server are always set by the chart.
 openvasConf: {}
 
 openvasd:

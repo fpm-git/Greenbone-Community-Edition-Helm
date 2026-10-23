@@ -159,7 +159,8 @@ spec:
               set -e
               cat > /mnt/openvas.conf <<'EOF'
               table_driven_lsc = yes
-              notus_url = http://127.0.0.1:{{ $notusPort }}/notus
+              {{- /* openvasd_server, not notus_url: ospd-openvas only disables its MQTT client when this key is set. openvas appends /notus/. */}}
+              openvasd_server = http://127.0.0.1:{{ $notusPort }}
               {{- range $key, $value := .Values.openvasConf }}
               {{ $key }} = {{ $value }}
               {{- end }}
