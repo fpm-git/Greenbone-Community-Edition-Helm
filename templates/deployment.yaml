@@ -238,6 +238,7 @@ spec:
 
         - name: openvas
           image: registry.community.greenbone.net/community/openvas-scanner:stable
+          imagePullPolicy: Always
           volumeMounts:
             - name: openvas-storage
               mountPath: /etc/openvas
