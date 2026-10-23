@@ -11,7 +11,7 @@ metadata:
   {{- end }}
 spec:
   replicas: 1
-  revisionHistoryLimit: 10
+  revisionHistoryLimit: 3
   selector:
     matchLabels:
       {{- include "openvas.selectorLabels" . | nindent 6 }}
