@@ -7,7 +7,7 @@ psgvm:
   POSTGRES_VERSION: "17"
   image:
     repository: registry.community.greenbone.net/community/pg-gvm
-    tag: 22.6.13
+    tag: 22.6.18
   persistence:
     enabled: true
     storageClass: "default"
@@ -33,6 +33,49 @@ ospdOpenvas:
     requests:
       cpu: '3'
       memory: 250Mi
+  # Raw socket access (NET_RAW) and NET_ADMIN are needed for ICMP/ARP host
+  # discovery, SYN port scans and several NASL checks. Removing them reduces
+  # scan coverage.
+  capabilities:
+    add: ["NET_ADMIN", "NET_RAW"]
+  # Upstream docker compose runs ospd-openvas with seccomp=unconfined. Set to
+  # RuntimeDefault to harden further (test scans afterwards).
+  seccompProfile:
+    type: Unconfined
+
+# Extra settings appended to /etc/openvas/openvas.conf, e.g.
+#   openvasConf:
+#     plugins_timeout: 600
+# table_driven_lsc and notus_url are always set by the chart.
+openvasConf: {}
+
+openvasd:
+  # openvasd (notus service) is only used by the scanner inside the pod, so it
+  # listens on localhost and is not exposed via the Service. It has no auth.
+  listening: "127.0.0.1:81"
+
+# Idle debug container with gvm-tools (gvm-cli/gvm-pyshell) and the gvmd socket.
+gvmTools:
+  enabled: false
+
+# Feed data (VTs, Notus, SCAP, CERT, data objects) is copied in by init
+# containers on pod start, so a pod restart is what pulls a new feed.
+# This CronJob does a "rollout restart" of the deployment on a schedule.
+# Running scans are interrupted, so schedule it when no scans run.
+feedUpdate:
+  enabled: false
+  schedule: "0 6 * * 6"
+  timeZone: "Etc/UTC"
+  image:
+    repository: docker.io/curlimages/curl
+    tag: "8.10.1"
+
+# Resources per container name, e.g.
+#   resources:
+#     gvmd:
+#       requests: {cpu: 500m, memory: 1Gi}
+# ospd-openvas uses ospdOpenvas.resources.
+resources: {}
 
 gvmd:
 # https://github.com/registry.community.greenbone.net/community/docs/blob/main/src/22.4/container/workflows.md?plain=1#L336
@@ -85,16 +128,28 @@ serviceAccount:
   # The name of the service account to use.
   # If not set and create is true, a name is generated using the fullname template
   name: "openvas-serviceaccount"
+  # The pod never mounts the token (automountServiceAccountToken: false); it
+  # does not talk to the Kubernetes API.
 
 podAnnotations:
   reloader.stakater.com/auto: "true"
 
-podSecurityContext: 
+# The Greenbone images start as root and drop privileges themselves (gosu),
+# and postStart hooks chown data dirs, so the pod runs as uid 0.
+# Do not set fsGroup: it recursively changes group permissions on the
+# PostgreSQL data dir, which PostgreSQL refuses to start with.
+podSecurityContext:
   runAsUser: 0
+  seccompProfile:
+    type: RuntimeDefault
 
-securityContext:
-  fsGroup: 0
-  runAsUser: 0
+# Applied to every container (ospd-openvas gets its capabilities and
+# seccomp profile from ospdOpenvas.*).
+containerSecurityContext:
+  privileged: false
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["NET_RAW"]
 
 service:
   type: ClusterIP

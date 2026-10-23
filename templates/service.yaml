@@ -12,9 +12,5 @@ spec:
       protocol: TCP
       port: 9392
       targetPort: 9392
-    - name: openvasd
-      protocol: TCP
-      port: 81
-      targetPort: 81
   selector:
     {{- include "openvas.selectorLabels" . | nindent 4 }}

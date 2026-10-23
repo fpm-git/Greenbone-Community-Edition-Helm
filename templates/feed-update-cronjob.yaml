@@ -1,0 +1,112 @@
+{{- if .Values.feedUpdate.enabled }}
+{{- $name := printf "%s-feed-update" (include "openvas.fullname" .) }}
+{{- $ns := include "openvas.namespace" . }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "openvas.labels" . | nindent 4 }}
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "openvas.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: [{{ include "openvas.fullname" . | quote }}]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "openvas.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ $ns }}
+---
+# Restarts the deployment so the feed data init containers pull the latest
+# feed images (same as "kubectl rollout restart").
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "openvas.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.feedUpdate.schedule | quote }}
+  {{- with .Values.feedUpdate.timeZone }}
+  timeZone: {{ . | quote }}
+  {{- end }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 300
+      ttlSecondsAfterFinished: 604800
+      template:
+        spec:
+          serviceAccountName: {{ $name }}
+          automountServiceAccountToken: true
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: rollout-restart
+              image: {{ .Values.feedUpdate.image.repository }}:{{ .Values.feedUpdate.image.tag }}
+              imagePullPolicy: IfNotPresent
+              securityContext:
+                privileged: false
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 16Mi
+                limits:
+                  cpu: 100m
+                  memory: 64Mi
+              env:
+                - name: NAMESPACE
+                  value: {{ $ns | quote }}
+                - name: DEPLOYMENT
+                  value: {{ include "openvas.fullname" . | quote }}
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  SA=/var/run/secrets/kubernetes.io/serviceaccount
+                  NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+                  curl -sS --fail-with-body --cacert "$SA/ca.crt" \
+                    -H "Authorization: Bearer $(cat "$SA/token")" \
+                    -H "Content-Type: application/strategic-merge-patch+json" \
+                    -X PATCH \
+                    --data "{\"spec\":{\"template\":{\"metadata\":{\"annotations\":{\"kubectl.kubernetes.io/restartedAt\":\"$NOW\"}}}}}" \
+                    "https://kubernetes.default.svc/apis/apps/v1/namespaces/$NAMESPACE/deployments/$DEPLOYMENT" \
+                    -o /dev/null
+                  echo "Restarted deployment $NAMESPACE/$DEPLOYMENT at $NOW for feed update"
+{{- end }}

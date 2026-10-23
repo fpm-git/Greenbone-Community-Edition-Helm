@@ -28,6 +28,8 @@ spec:
       labels:
         {{- include "openvas.selectorLabels" . | nindent 8 }}
     spec:
+      serviceAccountName: {{ include "openvas.serviceAccountName" . }}
+      automountServiceAccountToken: false
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       {{ if .Values.topologySpreadConstraints }}
@@ -48,7 +50,7 @@ spec:
             - name: init-scripts
               mountPath: /init-scripts
           securityContext:
-            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+            {{- include "openvas.containerSecurityContext" . | nindent 12 }}
 
         - name: notus-data
           image: registry.community.greenbone.net/community/notus-data
@@ -58,7 +60,7 @@ spec:
               mountPath: /mnt
               subPath: notus-data
           securityContext:
-            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+            {{- include "openvas.containerSecurityContext" . | nindent 12 }}
 
         - name: scap-data
           image: registry.community.greenbone.net/community/scap-data
@@ -68,7 +70,7 @@ spec:
               mountPath: /mnt
               subPath: scap-data
           securityContext:
-            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+            {{- include "openvas.containerSecurityContext" . | nindent 12 }}
 
         - name: cert-bund-data
           image: registry.community.greenbone.net/community/cert-bund-data
@@ -78,7 +80,7 @@ spec:
               mountPath: /mnt
               subPath: cert-data
           securityContext:
-            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+            {{- include "openvas.containerSecurityContext" . | nindent 12 }}
 
         - name: dfn-cert-data
           image: registry.community.greenbone.net/community/dfn-cert-data
@@ -88,7 +90,7 @@ spec:
               mountPath: /mnt
               subPath: cert-data
           securityContext:
-            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+            {{- include "openvas.containerSecurityContext" . | nindent 12 }}
 
         - name: data-objects
           image: registry.community.greenbone.net/community/data-objects
@@ -101,7 +103,7 @@ spec:
               mountPath: /mnt
               subPath: data-objects/gvmd
           securityContext:
-            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+            {{- include "openvas.containerSecurityContext" . | nindent 12 }}
 
         - name: report-formats
           image: registry.community.greenbone.net/community/report-formats
@@ -114,7 +116,7 @@ spec:
               mountPath: /mnt
               subPath: data-objects/gvmd
           securityContext:
-            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+            {{- include "openvas.containerSecurityContext" . | nindent 12 }}
 
         - name: gpg-data
           image: registry.community.greenbone.net/community/gpg-data
@@ -122,9 +124,10 @@ spec:
           volumeMounts:
             - name: openvas-storage
               mountPath: /mnt
-              subPath: gnupg/gpg-data
+              # becomes /etc/openvas/gnupg (GNUPGHOME) in openvasd/ospd-openvas
+              subPath: gnupg
           securityContext:
-            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+            {{- include "openvas.containerSecurityContext" . | nindent 12 }}
 
         - name: vulnerability-tests
           image: registry.community.greenbone.net/community/vulnerability-tests
@@ -137,7 +140,7 @@ spec:
               mountPath: /mnt
               subPath: vt-data
           securityContext:
-            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+            {{- include "openvas.containerSecurityContext" . | nindent 12 }}
 
         - name: configure-openvas
           image: registry.community.greenbone.net/community/openvas-scanner:stable
@@ -148,9 +151,25 @@ spec:
             - name: shared-storage
               mountPath: /var/log/openvas
               subPath: openvas-log-data
-          command: ["/bin/sh", "-c", "printf \"table_driven_lsc = yes\nopenvasd_server = http://openvasd:80\n\" > /mnt/openvas.conf && sed \"s/127/{{ .Values.logLevel }}/\" /etc/openvas/openvas_log.conf | sed 's/gvm/openvas/' > /mnt/openvas_log.conf && chmod 644 /mnt/openvas.conf && chmod 644 /mnt/openvas_log.conf && touch /var/log/openvas/openvas.log && chmod 666 /var/log/openvas/openvas.log"]
+          {{- $notusPort := splitList ":" .Values.openvasd.listening | last }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              cat > /mnt/openvas.conf <<'EOF'
+              table_driven_lsc = yes
+              notus_url = http://127.0.0.1:{{ $notusPort }}/notus
+              {{- range $key, $value := .Values.openvasConf }}
+              {{ $key }} = {{ $value }}
+              {{- end }}
+              EOF
+              sed "s/127/{{ .Values.logLevel }}/" /etc/openvas/openvas_log.conf | sed 's/gvm/openvas/' > /mnt/openvas_log.conf
+              chmod 644 /mnt/openvas.conf /mnt/openvas_log.conf
+              touch /var/log/openvas/openvas.log
+              chmod 666 /var/log/openvas/openvas.log
           securityContext:
-            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+            {{- include "openvas.containerSecurityContext" . | nindent 12 }}
 
       containers:
         - name: redis-server
@@ -161,7 +180,8 @@ spec:
               mountPath: /run/redis
               subPath: redis-socket
           securityContext:
-            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+            {{- include "openvas.containerSecurityContext" . | nindent 12 }}
+          {{- include "openvas.resources" (dict "root" . "name" "redis-server") | nindent 10 }}
 
         - name: pg-gvm
           image: {{ .Values.psgvm.image.repository }}:{{ .Values.psgvm.image.tag }}
@@ -173,7 +193,8 @@ spec:
               mountPath: /var/run/postgresql
               subPath: psql-socket
           securityContext:
-            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+            {{- include "openvas.containerSecurityContext" . | nindent 12 }}
+          {{- include "openvas.resources" (dict "root" . "name" "pg-gvm") | nindent 10 }}
           lifecycle:
             postStart:
               exec:
@@ -218,7 +239,8 @@ spec:
           {{- end }}
           {{- end }}
           securityContext:
-            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+            {{- include "openvas.containerSecurityContext" . | nindent 12 }}
+          {{- include "openvas.resources" (dict "root" . "name" "gvmd") | nindent 10 }}
           lifecycle:
             postStart:
               exec:
@@ -234,7 +256,8 @@ spec:
             - name: gvmd-socket
               mountPath: /run/gvmd
           securityContext:
-            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+            {{- include "openvas.containerSecurityContext" . | nindent 12 }}
+          {{- include "openvas.resources" (dict "root" . "name" "gsa") | nindent 10 }}
 
         - name: openvas
           image: registry.community.greenbone.net/community/openvas-scanner:stable
@@ -247,21 +270,19 @@ spec:
               subPath: openvas-log-data
           command: ["/bin/sh", "-c", "cat /etc/openvas/openvas.conf && tail -f /var/log/openvas/openvas.log"]
           securityContext:
-            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+            {{- include "openvas.logSecurityContext" . | nindent 12 }}
+          {{- include "openvas.resources" (dict "root" . "name" "openvas") | nindent 10 }}
 
         - name: openvasd
           image: registry.community.greenbone.net/community/openvas-scanner:stable
           imagePullPolicy: Always
-          ports:
-            - containerPort: 81
-              protocol: TCP
           env:
             - name: OPENVASD_MODE
               value: "service_notus"
             - name: GNUPGHOME
               value: "/etc/openvas/gnupg"
             - name: LISTENING
-              value: "0.0.0.0:81"
+              value: {{ .Values.openvasd.listening | quote }}
           volumeMounts:
             - name: openvas-storage
               mountPath: /etc/openvas
@@ -271,16 +292,21 @@ spec:
             - name: shared-storage
               mountPath: /var/lib/notus
               subPath: notus-data
+            - name: shared-storage
+              mountPath: /var/lib/openvas/plugins
+              subPath: vt-data
+          {{- include "openvas.resources" (dict "root" . "name" "openvasd") | nindent 10 }}
           securityContext:
-            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+            {{- include "openvas.containerSecurityContext" . | nindent 12 }}
 
         - name: ospd-openvas
           image: {{ .Values.ospd.image.repository }}:{{ .Values.ospd.image.tag }}
           imagePullPolicy: Always
           securityContext:
-            capabilities:
-              add: ["NET_ADMIN", "NET_RAW"]
-            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+            {{- include "openvas.ospdSecurityContext" . | nindent 12 }}
+          env:
+            - name: GNUPGHOME
+              value: "/etc/openvas/gnupg"
           command: ["ospd-openvas", "-f", "--config", "/etc/gvm/ospd-openvas.conf", "--notus-feed-dir", "/var/lib/notus/advisories", "-m", "666"]
           volumeMounts:
             - name: shared-storage
@@ -300,11 +326,12 @@ spec:
             - name: shared-storage
               mountPath: /var/log/openvas
               subPath: openvas-log-data
-          {{- with .Values.ospdOpenvas.resources }}
+          {{- with (.Values.ospdOpenvas.resources | default (get (default dict .Values.resources) "ospd-openvas")) }}
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
 
+        {{- if .Values.gvmTools.enabled }}
         - name: gvm-tools
           image: registry.community.greenbone.net/community/gvm-tools
           imagePullPolicy: Always
@@ -320,7 +347,9 @@ spec:
             - sh
             - '-c'
           securityContext:
-            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+            {{- include "openvas.containerSecurityContext" . | nindent 12 }}
+          {{- include "openvas.resources" (dict "root" . "name" "gvm-tools") | nindent 10 }}
+        {{- end }}
 
       volumes:
         - name: shared-storage

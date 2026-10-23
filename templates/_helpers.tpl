@@ -72,3 +72,50 @@ Create the name of the service account to use
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
 {{- end }}
+
+{{/*
+Container securityContext shared by all containers
+*/}}
+{{- define "openvas.containerSecurityContext" -}}
+{{- toYaml .Values.containerSecurityContext }}
+{{- end }}
+
+{{/*
+securityContext for ospd-openvas: shared settings plus the capabilities and
+seccomp profile it needs for raw-socket scanning
+*/}}
+{{- define "openvas.ospdSecurityContext" -}}
+{{- $ctx := omit (deepCopy .Values.containerSecurityContext) "capabilities" "seccompProfile" }}
+{{- with .Values.ospdOpenvas.capabilities }}
+{{- $_ := set $ctx "capabilities" . }}
+{{- end }}
+{{- with .Values.ospdOpenvas.seccompProfile }}
+{{- $_ := set $ctx "seccompProfile" . }}
+{{- end }}
+{{- toYaml $ctx }}
+{{- end }}
+
+{{/*
+Resources for a container, looked up by name in .Values.resources
+Usage: include "openvas.resources" (dict "root" . "name" "gvmd")
+*/}}
+{{- define "openvas.resources" -}}
+{{- with (get (default dict .root.Values.resources) .name) }}
+resources:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{/*
+securityContext for the "openvas" log container: it only reads openvas.conf
+and tails the (0666) scanner log, so it can run non-root and read-only
+*/}}
+{{- define "openvas.logSecurityContext" -}}
+{{- $ctx := deepCopy .Values.containerSecurityContext }}
+{{- $_ := set $ctx "runAsUser" 65534 }}
+{{- $_ := set $ctx "runAsGroup" 65534 }}
+{{- $_ := set $ctx "runAsNonRoot" true }}
+{{- $_ := set $ctx "readOnlyRootFilesystem" true }}
+{{- $_ := set $ctx "capabilities" (dict "drop" (list "ALL")) }}
+{{- toYaml $ctx }}
+{{- end }}
