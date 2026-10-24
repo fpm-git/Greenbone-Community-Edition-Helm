@@ -119,3 +119,95 @@ and tails the (0666) scanner log, so it can run non-root and read-only
 {{- $_ := set $ctx "capabilities" (dict "drop" (list "ALL")) }}
 {{- toYaml $ctx }}
 {{- end }}
+
+{{/*
+image and imagePullPolicy for a container
+Usage: include "openvas.image" (dict "root" . "image" .Values.images.gvmd)
+*/}}
+{{- define "openvas.image" -}}
+image: {{ printf "%s:%s" .image.repository (toString .image.tag) | quote }}
+imagePullPolicy: {{ .image.pullPolicy | default .root.Values.imagePullPolicy }}
+{{- end }}
+
+{{/*
+image and imagePullPolicy for a feed data image
+Usage: include "openvas.feedImage" (dict "root" . "name" "scap-data")
+*/}}
+{{- define "openvas.feedImage" -}}
+{{- $f := .root.Values.feedImages }}
+image: {{ printf "%s/%s:%s" $f.registry .name (toString $f.tag) | quote }}
+imagePullPolicy: {{ $f.pullPolicy | default .root.Values.imagePullPolicy }}
+{{- end }}
+
+{{/*
+Probes for a container, looked up by name in .Values.probes
+Usage: include "openvas.probes" (dict "root" . "name" "gvmd")
+*/}}
+{{- define "openvas.probes" -}}
+{{- with (get (default dict .root.Values.probes) .name) }}
+{{- toYaml . }}
+{{- end }}
+{{- end }}
+
+{{/*
+securityContext for redis-server: shared settings merged with redis.securityContext
+*/}}
+{{- define "openvas.redisSecurityContext" -}}
+{{- $ctx := mergeOverwrite (deepCopy .Values.containerSecurityContext) (deepCopy .Values.redis.securityContext) }}
+{{- toYaml $ctx }}
+{{- end }}
+
+{{/*
+redis-server container. Runs as a native sidecar (restartPolicy: Always in
+initContainers) when nativeSidecars is true so it stops after ospd-openvas.
+Usage: include "openvas.redisContainer" (dict "root" . "sidecar" true)
+*/}}
+{{- define "openvas.redisContainer" -}}
+{{- $root := .root }}
+- name: redis-server
+  {{- include "openvas.image" (dict "root" $root "image" $root.Values.redis.image) | nindent 2 }}
+  {{- if .sidecar }}
+  restartPolicy: Always
+  {{- end }}
+  command: ["redis-server", "/etc/redis/redis.conf"]
+  volumeMounts:
+    - name: redis-config
+      mountPath: /etc/redis
+      readOnly: true
+    - name: redis-socket
+      mountPath: /run/redis
+    - name: redis-data
+      mountPath: /data
+  securityContext:
+    {{- include "openvas.redisSecurityContext" $root | nindent 4 }}
+  {{- include "openvas.probes" (dict "root" $root "name" "redis-server") | nindent 2 }}
+  {{- include "openvas.resources" (dict "root" $root "name" "redis-server") | nindent 2 }}
+{{- end }}
+
+{{/*
+pg-gvm container. Runs as a native sidecar when nativeSidecars is true so
+PostgreSQL stops after gvmd instead of underneath it.
+Usage: include "openvas.pgContainer" (dict "root" . "sidecar" true)
+*/}}
+{{- define "openvas.pgContainer" -}}
+{{- $root := .root }}
+- name: pg-gvm
+  {{- include "openvas.image" (dict "root" $root "image" $root.Values.psgvm.image) | nindent 2 }}
+  {{- if .sidecar }}
+  restartPolicy: Always
+  {{- end }}
+  volumeMounts:
+    - name: psql-storage
+      mountPath: /var/lib/postgresql
+    - name: shared-storage
+      mountPath: /var/run/postgresql
+      subPath: psql-socket
+  securityContext:
+    {{- include "openvas.containerSecurityContext" $root | nindent 4 }}
+  {{- include "openvas.probes" (dict "root" $root "name" "pg-gvm") | nindent 2 }}
+  {{- include "openvas.resources" (dict "root" $root "name" "pg-gvm") | nindent 2 }}
+  lifecycle:
+    postStart:
+      exec:
+        command: ["/bin/sh", "-c", "chown -R postgres:postgres /var/lib/postgresql"]
+{{- end }}

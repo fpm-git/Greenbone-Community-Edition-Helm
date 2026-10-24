@@ -3,20 +3,81 @@
 # Declare variables to be passed into your templates.
 hostname: openvas.example.com
 
+# Default pull policy. "Always" with the "stable" tags below means every pod
+# restart (e.g. the feedUpdate CronJob) also picks up new scanner releases.
+imagePullPolicy: Always
+
+# Greenbone application images. Each accepts repository, tag and pullPolicy.
+# Pin tag to a version (e.g. gvmd 26.42.0) to control upgrades.
+images:
+  gvmd:
+    repository: ghcr.io/greenbone/gvmd
+    tag: stable
+  gsa:
+    repository: ghcr.io/greenbone/gsa
+    tag: stable
+  # Used by openvasd, configure-openvas and the openvas log container
+  openvasScanner:
+    repository: ghcr.io/greenbone/openvas-scanner
+    tag: stable
+  gvmTools:
+    repository: ghcr.io/greenbone/gvm-tools
+    tag: stable
+
+# Feed data images (copied in by init containers on every pod start).
+# These are only published to the Greenbone community registry.
+feedImages:
+  registry: registry.community.greenbone.net/community
+  tag: latest
+
 psgvm:
   POSTGRES_VERSION: "17"
+  # Pin a version: the PostgreSQL major in the image must match the data dir.
   image:
-    repository: registry.community.greenbone.net/community/pg-gvm
+    repository: ghcr.io/greenbone/pg-gvm
     tag: 22.6.18
   persistence:
     enabled: true
     storageClass: "default"
     accessMode: ReadWriteOnce
     size: 50Gi
+
+# ospd-openvas is not published to ghcr.io
 ospd:
   image:
     repository: registry.community.greenbone.net/community/ospd-openvas
     tag: stable
+
+# In-pod Redis used by ospd-openvas/openvas for the scan knowledge base.
+# It only listens on a unix socket shared with ospd-openvas.
+redis:
+  image:
+    repository: registry.community.greenbone.net/community/redis-server
+    tag: latest
+  # Alternative: the official image, which gets Redis security fixes sooner.
+  # "8-trixie" follows Redis 8.x releases without jumping to a new major.
+  #   image:
+  #     repository: docker.io/library/redis
+  #     tag: 8-trixie
+  # Merged over containerSecurityContext. Redis needs no root or capabilities.
+  securityContext:
+    runAsUser: 999
+    runAsGroup: 999
+    runAsNonRoot: true
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop: ["ALL"]
+  # Extra redis.conf directives, e.g. {maxmemory: 2gb}
+  extraConfig: {}
+
+# Run pg-gvm and redis-server as native sidecars (Kubernetes >= 1.29) so
+# they start before and stop after gvmd/ospd-openvas. Without this,
+# PostgreSQL can shut down underneath gvmd, which aborts and marks running
+# tasks as Interrupted.
+nativeSidecars: true
+
+# Time for gvmd/ospd-openvas, then PostgreSQL, to shut down cleanly.
+terminationGracePeriodSeconds: 120
 
 #  4  Errors.
 #  8  Critical situation.
@@ -68,7 +129,7 @@ feedUpdate:
   timeZone: "Etc/UTC"
   image:
     repository: docker.io/curlimages/curl
-    tag: "8.10.1"
+    tag: latest
 
 # Resources per container name, e.g.
 #   resources:
@@ -156,27 +217,38 @@ service:
 
 
 
-readinessProbe:
-  # failureThreshold: 3
-  # httpGet:
-  #   path: /health
-  #   port: 80
-  #   scheme: HTTP
-  # initialDelaySeconds: 5
-  # periodSeconds: 2
-  # successThreshold: 2
-  # timeoutSeconds: 2
-
-livenessProbe:
-  # failureThreshold: 3
-  # httpGet:
-  #   path: /health
-  #   port: 80
-  #   scheme: HTTP
-  # initialDelaySeconds: 5
-  # periodSeconds: 2
-  # successThreshold: 1
-  # timeoutSeconds: 2
+# Probes per container name. There are no liveness probes on purpose: a
+# restart kills running scans. startupProbes on the sidecars hold back
+# gvmd/ospd-openvas until PostgreSQL and Redis accept connections.
+probes:
+  pg-gvm:
+    startupProbe:
+      exec:
+        # "started" is written after the init phase, before the final start
+        command: ["/bin/sh", "-c", "test -f /var/lib/postgresql/started && pg_isready -q -h /var/run/postgresql -p 5432"]
+      periodSeconds: 5
+      timeoutSeconds: 5
+      # up to 1h for crash recovery on a large database
+      failureThreshold: 720
+  redis-server:
+    startupProbe:
+      exec:
+        command: ["/bin/sh", "-c", "redis-cli -s /run/redis/redis.sock ping | grep -q PONG"]
+      periodSeconds: 2
+      timeoutSeconds: 5
+      failureThreshold: 150
+  gvmd:
+    readinessProbe:
+      exec:
+        command: ["test", "-S", "/run/gvmd/gvmd.sock"]
+      periodSeconds: 10
+      failureThreshold: 3
+  gsa:
+    readinessProbe:
+      tcpSocket:
+        port: 9392
+      periodSeconds: 10
+      failureThreshold: 3
 
 nodeSelector: {}
 

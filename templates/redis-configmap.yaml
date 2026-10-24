@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "openvas.fullname" . }}-redis
+  namespace: {{ template "openvas.namespace" . }}
+  labels:
+    {{- include "openvas.labels" . | nindent 4 }}
+data:
+  # Equivalent of the Greenbone redis-server image config: unix socket only,
+  # no persistence (the scan knowledge base is per scan), 1025 databases
+  # (one per running host scan plus the VT cache).
+  redis.conf: |
+    port 0
+    unixsocket /run/redis/redis.sock
+    unixsocketperm 770
+    databases 1025
+    save ""
+    appendonly no
+    dir /data
+    timeout 0
+    maxclients 10000
+    loglevel notice
+    {{- range $key, $value := .Values.redis.extraConfig }}
+    {{ $key }} {{ $value }}
+    {{- end }}

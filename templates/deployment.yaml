@@ -30,6 +30,7 @@ spec:
     spec:
       serviceAccountName: {{ include "openvas.serviceAccountName" . }}
       automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       {{ if .Values.topologySpreadConstraints }}
@@ -38,8 +39,7 @@ spec:
       {{- end }}
       initContainers:
         - name: pg-init
-          image: {{ .Values.psgvm.image.repository }}:{{ .Values.psgvm.image.tag }}
-          imagePullPolicy: Always
+          {{- include "openvas.image" (dict "root" . "image" .Values.psgvm.image) | nindent 10 }}
           command: ["/bin/sh", "-c", "/init-scripts/init-postgres.sh"]
           env:
             - name: POSTGRES_VERSION
@@ -53,8 +53,7 @@ spec:
             {{- include "openvas.containerSecurityContext" . | nindent 12 }}
 
         - name: notus-data
-          image: registry.community.greenbone.net/community/notus-data
-          imagePullPolicy: Always
+          {{- include "openvas.feedImage" (dict "root" . "name" "notus-data") | nindent 10 }}
           volumeMounts:
             - name: shared-storage
               mountPath: /mnt
@@ -63,8 +62,7 @@ spec:
             {{- include "openvas.containerSecurityContext" . | nindent 12 }}
 
         - name: scap-data
-          image: registry.community.greenbone.net/community/scap-data
-          imagePullPolicy: Always
+          {{- include "openvas.feedImage" (dict "root" . "name" "scap-data") | nindent 10 }}
           volumeMounts:
             - name: gvmd-storage
               mountPath: /mnt
@@ -73,8 +71,7 @@ spec:
             {{- include "openvas.containerSecurityContext" . | nindent 12 }}
 
         - name: cert-bund-data
-          image: registry.community.greenbone.net/community/cert-bund-data
-          imagePullPolicy: Always
+          {{- include "openvas.feedImage" (dict "root" . "name" "cert-bund-data") | nindent 10 }}
           volumeMounts:
             - name: gvmd-storage
               mountPath: /mnt
@@ -83,8 +80,7 @@ spec:
             {{- include "openvas.containerSecurityContext" . | nindent 12 }}
 
         - name: dfn-cert-data
-          image: registry.community.greenbone.net/community/dfn-cert-data
-          imagePullPolicy: Always
+          {{- include "openvas.feedImage" (dict "root" . "name" "dfn-cert-data") | nindent 10 }}
           volumeMounts:
             - name: gvmd-storage
               mountPath: /mnt
@@ -93,8 +89,7 @@ spec:
             {{- include "openvas.containerSecurityContext" . | nindent 12 }}
 
         - name: data-objects
-          image: registry.community.greenbone.net/community/data-objects
-          imagePullPolicy: Always
+          {{- include "openvas.feedImage" (dict "root" . "name" "data-objects") | nindent 10 }}
           env:
             - name: FEED_RELEASE
               value: "{{ .Values.FEED_RELEASE }}"
@@ -106,8 +101,7 @@ spec:
             {{- include "openvas.containerSecurityContext" . | nindent 12 }}
 
         - name: report-formats
-          image: registry.community.greenbone.net/community/report-formats
-          imagePullPolicy: Always
+          {{- include "openvas.feedImage" (dict "root" . "name" "report-formats") | nindent 10 }}
           env:
             - name: FEED_RELEASE
               value: "{{ .Values.FEED_RELEASE }}"
@@ -119,8 +113,7 @@ spec:
             {{- include "openvas.containerSecurityContext" . | nindent 12 }}
 
         - name: gpg-data
-          image: registry.community.greenbone.net/community/gpg-data
-          imagePullPolicy: Always
+          {{- include "openvas.feedImage" (dict "root" . "name" "gpg-data") | nindent 10 }}
           volumeMounts:
             - name: openvas-storage
               mountPath: /mnt
@@ -130,8 +123,7 @@ spec:
             {{- include "openvas.containerSecurityContext" . | nindent 12 }}
 
         - name: vulnerability-tests
-          image: registry.community.greenbone.net/community/vulnerability-tests
-          imagePullPolicy: Always
+          {{- include "openvas.feedImage" (dict "root" . "name" "vulnerability-tests") | nindent 10 }}
           env:
             - name: FEED_RELEASE
               value: "{{ .Values.FEED_RELEASE }}"
@@ -143,8 +135,7 @@ spec:
             {{- include "openvas.containerSecurityContext" . | nindent 12 }}
 
         - name: configure-openvas
-          image: registry.community.greenbone.net/community/openvas-scanner:stable
-          imagePullPolicy: Always
+          {{- include "openvas.image" (dict "root" . "image" .Values.images.openvasScanner) | nindent 10 }}
           volumeMounts:
             - name: openvas-storage
               mountPath: /mnt
@@ -172,38 +163,19 @@ spec:
           securityContext:
             {{- include "openvas.containerSecurityContext" . | nindent 12 }}
 
-      containers:
-        - name: redis-server
-          image: registry.community.greenbone.net/community/redis-server
-          imagePullPolicy: Always
-          volumeMounts:
-            - name: shared-storage
-              mountPath: /run/redis
-              subPath: redis-socket
-          securityContext:
-            {{- include "openvas.containerSecurityContext" . | nindent 12 }}
-          {{- include "openvas.resources" (dict "root" . "name" "redis-server") | nindent 10 }}
+        {{- if .Values.nativeSidecars }}
+        {{- include "openvas.redisContainer" (dict "root" . "sidecar" true) | nindent 8 }}
+        {{- include "openvas.pgContainer" (dict "root" . "sidecar" true) | nindent 8 }}
+        {{- end }}
 
-        - name: pg-gvm
-          image: {{ .Values.psgvm.image.repository }}:{{ .Values.psgvm.image.tag }}
-          imagePullPolicy: Always
-          volumeMounts:
-            - name: psql-storage
-              mountPath: /var/lib/postgresql
-            - name: shared-storage
-              mountPath: /var/run/postgresql
-              subPath: psql-socket
-          securityContext:
-            {{- include "openvas.containerSecurityContext" . | nindent 12 }}
-          {{- include "openvas.resources" (dict "root" . "name" "pg-gvm") | nindent 10 }}
-          lifecycle:
-            postStart:
-              exec:
-                command: ["/bin/sh", "-c", "chown -R postgres:postgres /var/lib/postgresql"]
+      containers:
+        {{- if not .Values.nativeSidecars }}
+        {{- include "openvas.redisContainer" (dict "root" . "sidecar" false) | nindent 8 }}
+        {{- include "openvas.pgContainer" (dict "root" . "sidecar" false) | nindent 8 }}
+        {{- end }}
 
         - name: gvmd
-          image: registry.community.greenbone.net/community/gvmd:stable
-          imagePullPolicy: Always
+          {{- include "openvas.image" (dict "root" . "image" .Values.images.gvmd) | nindent 10 }}
           volumeMounts:
             - name: gvmd-storage
               mountPath: /var/lib/gvm
@@ -241,6 +213,7 @@ spec:
           {{- end }}
           securityContext:
             {{- include "openvas.containerSecurityContext" . | nindent 12 }}
+          {{- include "openvas.probes" (dict "root" . "name" "gvmd") | nindent 10 }}
           {{- include "openvas.resources" (dict "root" . "name" "gvmd") | nindent 10 }}
           lifecycle:
             postStart:
@@ -248,8 +221,7 @@ spec:
                 command: ["/bin/sh", "-c", "chown -R gvmd:gvmd /run/gvmd; mkdir -p /var/lib/gvm/gvmd; chown -R gvmd:gvmd /var/lib/gvm"]
 
         - name: gsa
-          image: registry.community.greenbone.net/community/gsa:stable
-          imagePullPolicy: Always
+          {{- include "openvas.image" (dict "root" . "image" .Values.images.gsa) | nindent 10 }}
           ports:
             - containerPort: 9392
               protocol: TCP
@@ -258,11 +230,11 @@ spec:
               mountPath: /run/gvmd
           securityContext:
             {{- include "openvas.containerSecurityContext" . | nindent 12 }}
+          {{- include "openvas.probes" (dict "root" . "name" "gsa") | nindent 10 }}
           {{- include "openvas.resources" (dict "root" . "name" "gsa") | nindent 10 }}
 
         - name: openvas
-          image: registry.community.greenbone.net/community/openvas-scanner:stable
-          imagePullPolicy: Always
+          {{- include "openvas.image" (dict "root" . "image" .Values.images.openvasScanner) | nindent 10 }}
           volumeMounts:
             - name: openvas-storage
               mountPath: /etc/openvas
@@ -275,8 +247,7 @@ spec:
           {{- include "openvas.resources" (dict "root" . "name" "openvas") | nindent 10 }}
 
         - name: openvasd
-          image: registry.community.greenbone.net/community/openvas-scanner:stable
-          imagePullPolicy: Always
+          {{- include "openvas.image" (dict "root" . "image" .Values.images.openvasScanner) | nindent 10 }}
           env:
             - name: OPENVASD_MODE
               value: "service_notus"
@@ -301,8 +272,7 @@ spec:
             {{- include "openvas.containerSecurityContext" . | nindent 12 }}
 
         - name: ospd-openvas
-          image: {{ .Values.ospd.image.repository }}:{{ .Values.ospd.image.tag }}
-          imagePullPolicy: Always
+          {{- include "openvas.image" (dict "root" . "image" .Values.ospd.image) | nindent 10 }}
           securityContext:
             {{- include "openvas.ospdSecurityContext" . | nindent 12 }}
           env:
@@ -319,14 +289,14 @@ spec:
             - name: shared-storage
               mountPath: /run/ospd
               subPath: ospd-openvas-socket
-            - name: shared-storage
+            - name: redis-socket
               mountPath: /run/redis
-              subPath: redis-socket
             - name: openvas-storage
               mountPath: /etc/openvas/
             - name: shared-storage
               mountPath: /var/log/openvas
               subPath: openvas-log-data
+          {{- include "openvas.probes" (dict "root" . "name" "ospd-openvas") | nindent 10 }}
           {{- with (.Values.ospdOpenvas.resources | default (get (default dict .Values.resources) "ospd-openvas")) }}
           resources:
             {{- toYaml . | nindent 12 }}
@@ -334,8 +304,7 @@ spec:
 
         {{- if .Values.gvmTools.enabled }}
         - name: gvm-tools
-          image: registry.community.greenbone.net/community/gvm-tools
-          imagePullPolicy: Always
+          {{- include "openvas.image" (dict "root" . "image" .Values.images.gvmTools) | nindent 10 }}
           volumeMounts:
             - name: gvmd-socket
               mountPath: /run/gvmd
@@ -370,6 +339,13 @@ spec:
             defaultMode: 0755
         - name: gvmd-socket
           emptyDir: {}
+        - name: redis-socket
+          emptyDir: {}
+        - name: redis-data
+          emptyDir: {}
+        - name: redis-config
+          configMap:
+            name: {{ include "openvas.fullname" . }}-redis
 
       {{- with .Values.nodeSelector }}
       nodeSelector:

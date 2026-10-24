@@ -74,8 +74,7 @@ spec:
               type: RuntimeDefault
           containers:
             - name: rollout-restart
-              image: {{ .Values.feedUpdate.image.repository }}:{{ .Values.feedUpdate.image.tag }}
-              imagePullPolicy: IfNotPresent
+              {{- include "openvas.image" (dict "root" . "image" .Values.feedUpdate.image) | nindent 14 }}
               securityContext:
                 privileged: false
                 allowPrivilegeEscalation: false
