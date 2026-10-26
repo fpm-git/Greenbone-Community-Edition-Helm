@@ -225,7 +225,7 @@ probes:
     startupProbe:
       exec:
         # "started" is written after the init phase, before the final start
-        command: ["/bin/sh", "-c", "test -f /var/lib/postgresql/started && pg_isready -q -h /var/run/postgresql -p 5432"]
+        command: ["/bin/sh", "-c", "test -f /var/lib/postgresql/started && pg_isready -q -h /var/run/postgresql -p 5432 -U \"${POSTGRES_USER:-gvmd}\" -d \"${POSTGRES_DB:-gvmd}\""]
       periodSeconds: 5
       timeoutSeconds: 5
       # up to 1h for crash recovery on a large database

@@ -216,6 +216,35 @@ spec:
           {{- include "openvas.probes" (dict "root" . "name" "gvmd") | nindent 10 }}
           {{- include "openvas.resources" (dict "root" . "name" "gvmd") | nindent 10 }}
           lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - |
+                    set -eu
+                    if [ ! -s /run/gvmd/gvmd.pid ]; then
+                      echo "gvmd has no PID file; initialization has not completed"
+                      exit 0
+                    fi
+                    pid=$(cat /run/gvmd/gvmd.pid)
+                    case "$pid" in
+                      ''|*[!0-9]*|0|1)
+                        echo "Invalid gvmd PID: $pid" >&2
+                        exit 1
+                        ;;
+                    esac
+                    if kill -0 "$pid" 2>/dev/null; then
+                      if [ "$(cat "/proc/$pid/comm")" != gvmd ]; then
+                        echo "PID $pid does not belong to gvmd" >&2
+                        exit 1
+                      fi
+                      echo "Sending SIGTERM to gvmd PID $pid and waiting for shutdown"
+                      kill -TERM "$pid"
+                      while kill -0 "$pid" 2>/dev/null; do
+                        sleep 1
+                      done
+                    fi
             postStart:
               exec:
                 command: ["/bin/sh", "-c", "chown -R gvmd:gvmd /run/gvmd; mkdir -p /var/lib/gvm/gvmd; chown -R gvmd:gvmd /var/lib/gvm"]

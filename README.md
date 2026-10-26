@@ -58,9 +58,13 @@ Application images (`images.gvmd`, `images.gsa`, `images.openvasScanner`, `image
 
 With `nativeSidecars: true` (Kubernetes >= 1.29), pg-gvm and redis-server run as native sidecars. They start, and pass their startup probes, before gvmd and ospd-openvas, and Kubernetes stops them only after those have exited. Without this, PostgreSQL can stop underneath gvmd on a restart, and gvmd then marks running tasks as Interrupted. Set `nativeSidecars: false` on older clusters. `terminationGracePeriodSeconds` (default 120) bounds the whole shutdown.
 
+The gvmd container preserves the upstream image entrypoint and initialization script. A `preStop` hook sends SIGTERM directly to the daemon identified by `/run/gvmd/gvmd.pid` and waits for it to exit before Kubernetes terminates the container. This avoids relying on the upstream shell wrapper to forward signals and keeps PostgreSQL available during gvmd cleanup. The hook shares the pod's termination grace period; running scans are still interrupted by a pod restart.
+
 ### Probes
 
 `probes` holds probes by container name. By default there are startup probes for pg-gvm and redis-server and readiness probes for gvmd and gsa. There are deliberately no liveness probes, because a restart kills running scans.
+
+The PostgreSQL startup probe checks the local Unix socket using `POSTGRES_USER` and `POSTGRES_DB` from the pg-gvm container environment (both default to `gvmd`, matching the image). It does not connect to external PostgreSQL clusters or require additional credentials. `pg_isready` checks server availability, not successful authentication or schema readiness.
 
 ### Redis
 
