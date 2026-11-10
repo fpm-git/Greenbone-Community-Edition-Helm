@@ -199,6 +199,8 @@ Usage: include "openvas.pgContainer" (dict "root" . "sidecar" true)
   volumeMounts:
     - name: psql-storage
       mountPath: /var/lib/postgresql
+    - name: pg-shm
+      mountPath: /dev/shm
     - name: shared-storage
       mountPath: /var/run/postgresql
       subPath: psql-socket

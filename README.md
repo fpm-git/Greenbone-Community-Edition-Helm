@@ -10,7 +10,9 @@
  ### PG-GVM
 
  Adding a PV to `/var/lib/postgresql` breaks the container. So I setup an init-container, which uses the configmap script at templates/init-configmap.yaml to initilize the db for the first time.
-```
+
+ PostgreSQL mounts a memory-backed `emptyDir` at `/dev/shm` for shared-memory operations. Its size is controlled by `psgvm.sharedMemorySize` (default `1Gi`); usage counts against the pod's memory.
+ ```
         - name: pg-init
           image: {{ .Values.psgvm.image.repository }}:{{ .Values.psgvm.image.tag }}
           command: ["/bin/sh", "-c", "/init-scripts/init-postgres.sh"]

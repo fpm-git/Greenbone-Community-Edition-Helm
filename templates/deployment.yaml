@@ -362,6 +362,10 @@ spec:
         - name: psql-storage
           persistentVolumeClaim:
             claimName: psql-pvc
+        - name: pg-shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.psgvm.sharedMemorySize | quote }}
         - name: init-scripts
           configMap:
             name: init-scripts-config

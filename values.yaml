@@ -36,6 +36,8 @@ psgvm:
   image:
     repository: ghcr.io/greenbone/pg-gvm
     tag: 22.6.18
+  # PostgreSQL uses shared memory for parallel queries and larger operations.
+  sharedMemorySize: 1Gi
   persistence:
     enabled: true
     storageClass: "default"
